@@ -1,0 +1,30 @@
+---
+# First run:
+# ansible-playbook exchanger.yaml -i inventory.yaml --extra-vars "root_pass=my_server_pass" --extra-vars "cloudflare_token=my_cf_token"
+# ansible-galaxy collection install -r requirements.yaml
+#
+# Next run: ansible-playbook exchanger.yaml -i inventory.yaml
+
+- name: Configure VPS for PremiumExchanger
+  hosts: exchanger
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: First run (password supplied) — setup deploy user + key
+      include_tasks: 01-first-run-password.yaml
+      when: root_pass is defined and root_pass | length > 0
+      vars:          
+        ansible_user: root
+        ansible_password: "{{ root_pass }}"
+        ansible_ssh_common_args: -o PubkeyAuthentication=no
+
+    - name: Subsequent runs — key-based only
+      include_tasks: 02-next-runs-key.yaml
+      vars:
+        ansible_user: "{{ deploy_user }}"
+        ansible_password: null
+        ansible_ssh_private_key_file: "{{ ssh_key_path }}"
+        ansible_ssh_common_args: ""
+
+...

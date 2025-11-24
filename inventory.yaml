@@ -1,0 +1,14 @@
+all:
+  children:
+    vpn_nodes:
+      hosts:
+        exchanger:
+          ansible_host: "{{ my_server }}"
+          ansible_user: root
+  vars:
+    ssh_key_path: ~/.ssh/exchanger
+    my_server: ichange # Server IP or name
+    deploy_user: deploy
+    domain: domain.com
+    acme_email: "info@{{ domain }}"
+    acme_directory: https://acme-v02.api.letsencrypt.org/directory

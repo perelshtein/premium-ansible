@@ -1,0 +1,188 @@
+---
+# Connect via SSH key (second run)
+
+# UFW ==================
+- name: Set up UFW rules
+  ufw:
+    rule: "{{ item.rule }}"
+    name: "{{ item.value }}"        
+    state: enabled # turn on firewall and enable it on boot
+  loop:
+    - { rule: allow, value: OpenSSH }
+    - { rule: allow, value: 443 }
+
+# Fail2ban ===============
+- name: Ensure fail2ban is installed
+  package:
+    name: fail2ban
+    state: present
+
+- name: Configure fail2ban
+  copy:
+    src: jail.local
+    dest: /etc/fail2ban/jail.local
+    backup: yes
+  register: fail2ban_config
+  
+- name: Reload fail2ban
+  service:
+    name: fail2ban
+    state: reloaded
+  when: fail2ban_config.changed
+
+# PHP =======================================
+- name: Install PHP 8.3 + required extensions
+  apt:
+    name:
+      - php8.3-fpm
+      - php8.3-iconv
+      - php8.3-mbstring
+      - php8.3-curl
+      - php8.3-gd
+      - php8.3-soap
+      - php8.3-gmp
+      - php8.3-zip
+      - php8.3-mysql
+      - php8.3-simplexml
+    state: present
+    update_cache: yes       # = apt update before install
+
+# Thanks to https://github.com/Akman
+- name: Download and untar ioncube-loader
+  unarchive:
+    src: "http://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz"
+    dest: /tmp
+    creates: /tmp/ioncube
+    copy: no
+
+- name: Get PHP module path
+  command: php -r 'echo ini_get("extension_dir");'
+  register: php_extensions_dir
+
+- name: Move ioncube-loader module into place
+  copy:
+    src: /tmp/ioncube/ioncube_loader_lin_8.3.so
+    dest: "{{ php_extensions_dir.stdout }}/ioncube_loader_lin_8.3.so"
+    remote_src: true
+  
+- name: Configure PHP settings
+  community.general.ini_file:
+    path: /etc/php/8.3/fpm/php.ini  # Adjust path to your specific PHP version and SAPI (cli/fpm)
+    section: PHP
+    option: "{{ item.option }}"
+    value: "{{ item.value }}"
+    state: present
+    backup: yes
+  loop:
+    - { option: short_open_tag, value: On }
+    - { option: memory_limit, value: 256M }
+    - { option: zend_extension, value: "{{ php_extensions_dir.stdout }}/ioncube_loader_lin_8.3.so" }
+  register: php_config
+
+- name: Reload PHP
+  ansible.builtin.service:
+    name: php8.3-fpm
+    state: reloaded
+  when: php_config.changed
+
+# MySQL =========================
+- name: Ensure MySQL is installed
+  package:
+    name:
+      - mysql-server
+      - python3-mysqldb
+    state: present    
+
+- name: Create new database
+  community.mysql.mysql_db:
+    name: "{{ domain | replace('.', '_') }}" # dots (*.com) not supported
+    state: present
+
+- name: Generate or load password for this domain
+  set_fact:
+    db_pass: "{{ lookup('ansible.builtin.password', 'mysql_pass_{{ domain }}.txt length=20') }}"
+
+- name: Create database user
+  community.mysql.mysql_user:
+    name: "{{ domain | replace('.', '_') }}"
+    password: "{{ db_pass }}"
+    priv: "{{ (domain | replace('.', '_')) + '.*:ALL' }}"
+    state: present
+
+# SSL cert ================================
+- name: Install certbot + Cloudflare DNS plugin
+  ansible.builtin.package:
+    name:
+      - certbot
+      - python3-certbot-dns-cloudflare
+    state: present
+    update_cache: yes
+
+- name: Create Cloudflare credentials file
+  ansible.builtin.copy:
+    dest: /etc/letsencrypt/cloudflare.ini
+    mode: '0600'
+    owner: root
+    group: root
+    content: |
+      dns_cloudflare_api_token = {{ cloudflare_token }}
+
+- name: Obtain/renew Let's Encrypt certificate via certbot + Cloudflare
+  ansible.builtin.command: >
+    certbot certonly
+    --non-interactive
+    --agree-tos
+    --email {{ acme_email }}
+    --dns-cloudflare
+    --dns-cloudflare-credentials /etc/letsencrypt/cloudflare.ini
+    --dns-cloudflare-propagation-seconds 30
+    -d {{ domain }}
+  args:
+    creates: /etc/letsencrypt/live/{{ domain }}/fullchain.pem
+  register: certbot_output
+  changed_when: "'Congratulations' in certbot_output.stdout"
+  become: yes
+
+- name: Print certbot output (optional)
+  ansible.builtin.debug:
+    var: certbot_output.stdout
+
+# Setup nginx =======
+- name: Install nginx
+  package:
+    name:
+      - nginx
+    state: present
+    update_cache: yes
+
+- name: Remove default nginx configuration
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+
+- name: Add nginx configuration
+  template:
+    src: nginx.j2
+    dest: "/etc/nginx/sites-available/{{domain}}"
+    mode: '0644'
+
+- name: Enable configuration
+  file:
+    src: "/etc/nginx/sites-available/{{domain}}"
+    dest: "/etc/nginx/sites-enabled/{{domain}}"
+    state: link
+
+- name: Create a new directory
+  file:
+    path: "/var/www/{{ domain }}"
+    state: directory
+    owner: www-data
+    group: www-data
+    mode: '0755'
+  
+- name: Reload Nginx after new certificate
+  ansible.builtin.service:
+    name: nginx
+    state: reloaded
+
+...

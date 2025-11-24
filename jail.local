@@ -1,0 +1,21 @@
+[DEFAULT]
+# Ban IP addresses for 5 minutes (300 seconds)
+bantime = 300
+# Look back at logs for 5 minutes to find failures
+findtime = 300
+# Ban after 5 failed attempts
+maxretry = 5
+# Ban action: Use UFW to block IPs (since you’re using UFW)
+banaction = ufw
+# Whitelist IPs (e.g., your own IP or trusted IPs)
+ignoreip = 127.0.0.1/8 ::1
+action = %(action_)s
+
+[sshd]
+enabled = true
+port = 22
+filter = sshd
+logpath = /var/log/auth.log
+maxretry = 5
+bantime = 300
+

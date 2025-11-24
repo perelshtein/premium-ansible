@@ -1,0 +1,40 @@
+server {
+    listen 443 ssl;
+    server_name {{ domain }};
+    
+    ssl_certificate /etc/letsencrypt/live/{{ domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ domain }}/privkey.pem;
+    #ssl_protocols TLSv1.2 TLSv1.3;
+    #ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-RSA-CHACHA20-POLY1305;
+    #ssl_prefer_server_ciphers on;
+    #ssl_ecdh_curve X25519:P-256:P-384;
+
+    root /var/www/{{ domain }};        # directory where index.html lives
+    index index.php;
+
+    access_log /var/log/nginx/{{ domain }}_access.log;
+    error_log /var/log/nginx/{{ domain }}_error.log;
+
+    # CMS URL rewriting (e.g., for WordPress permalinks)
+    location / {
+        try_files $uri $uri/ /index.php?$args;
+    }
+    
+    # pass PHP scripts to php-fpm
+    location ~ \.php$ {
+        include fastcgi_params;
+        fastcgi_split_path_info ^(.+\.php)(/.+)$;
+
+        # Use unix socket (adjust to match your php-fpm listen)
+        fastcgi_pass unix:/run/php/php8.3-fpm.sock;
+
+        fastcgi_index index.php;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        fastcgi_param PATH_INFO $fastcgi_path_info;
+    }
+
+    # Deny access to .ht* files
+    location ~ /\.ht {
+        deny all;
+    }
+}
